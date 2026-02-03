@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>BizFirst.Ai.ProcessEngine.Api.Base</RootNamespace>
+    <AssemblyName>BizFirst.Ai.ProcessEngine.Api.Base</AssemblyName>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Core" Version="2.2.5" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BizFirst.Ai.ProcessEngine.Domain\BizFirst.Ai.ProcessEngine.Domain.csproj" />
+    <ProjectReference Include="..\..\AiSession\BizFirst.Ai.AiSession.Domain\BizFirst.Ai.AiSession.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

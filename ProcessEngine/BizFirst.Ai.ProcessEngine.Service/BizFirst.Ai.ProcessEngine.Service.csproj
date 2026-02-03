@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>BizFirst.Ai.ProcessEngine.Service</RootNamespace>
+    <AssemblyName>BizFirst.Ai.ProcessEngine.Service</AssemblyName>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Jint" Version="4.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BizFirst.Ai.ProcessEngine.Domain\BizFirst.Ai.ProcessEngine.Domain.csproj" />
+    <ProjectReference Include="..\..\AiSession\BizFirst.Ai.AiSession.Service\BizFirst.Ai.AiSession.Service.csproj" />
+    <ProjectReference Include="..\..\Process\BizFirst.Ai.Process.Service\BizFirst.Ai.Process.Service.csproj" />
+  </ItemGroup>
+
+</Project>
