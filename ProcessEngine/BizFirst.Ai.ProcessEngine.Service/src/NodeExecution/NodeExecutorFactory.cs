@@ -91,6 +91,17 @@ public class NodeExecutorFactory : INodeExecutorFactory
         // Register action executors
         RegisterExecutor("send-email", typeof(Executors.Actions.SendEmailExecutor));
 
+        // Register workflow executors
+        RegisterExecutor("sub-workflow", typeof(Executors.Workflow.SubWorkflowExecutor));
+        RegisterExecutor("parallel-fork", typeof(Executors.Workflow.ParallelForkExecutor));
+        RegisterExecutor("parallel-join", typeof(Executors.Workflow.ParallelJoinExecutor));
+
+        // Register data transformation executors
+        RegisterExecutor("variable-assignment", typeof(Executors.Data.VariableAssignmentExecutor));
+        RegisterExecutor("json-transform", typeof(Executors.Data.JsonTransformExecutor));
+        RegisterExecutor("data-mapping", typeof(Executors.Data.DataMappingExecutor));
+        RegisterExecutor("collection-operation", typeof(Executors.Data.CollectionOperationExecutor));
+
         // Register integration executors
         RegisterExecutor("http-request", typeof(Executors.Integrations.HttpRequestExecutor));
 

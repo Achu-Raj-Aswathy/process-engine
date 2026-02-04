@@ -19,6 +19,9 @@ using BizFirst.Ai.ProcessEngine.Service.ErrorHandling;
 using BizFirst.Ai.ProcessEngine.Service.Persistence;
 using BizFirst.Ai.Process.Domain.Interfaces.Services;
 using BizFirstFi.Go.Essentials.Domain.Requests;
+using BizFirst.Ai.ProcessEngine.Service.Execution.Events;
+using BizFirst.Ai.ProcessEngine.Service.Execution.Tracing;
+using BizFirst.Ai.ProcessEngine.Domain.Execution.Tracing;
 
 /// <summary>
 /// Implementation of IOrchestrationProcessor using stack-based execution model.
@@ -32,6 +35,8 @@ public class OrchestrationProcessor : IOrchestrationProcessor
     private readonly IExecutionErrorHandler _errorHandler;
     private readonly IExecutionStateService _executionStateService;
     private readonly IProcessThreadExecutionService _threadExecutionService;
+    private readonly IEnumerable<IExecutionEventHandler> _eventHandlers;
+    private readonly IExecutionTracingService _tracingService;
     private readonly ILogger<OrchestrationProcessor> _logger;
 
     // Store current execution state for pause/resume
@@ -51,6 +56,8 @@ public class OrchestrationProcessor : IOrchestrationProcessor
         IExecutionErrorHandler errorHandler,
         IExecutionStateService executionStateService,
         IProcessThreadExecutionService threadExecutionService,
+        IEnumerable<IExecutionEventHandler> eventHandlers,
+        IExecutionTracingService tracingService,
         ILogger<OrchestrationProcessor> logger)
     {
         _definitionLoader = definitionLoader ?? throw new ArgumentNullException(nameof(definitionLoader));
@@ -59,6 +66,8 @@ public class OrchestrationProcessor : IOrchestrationProcessor
         _errorHandler = errorHandler ?? throw new ArgumentNullException(nameof(errorHandler));
         _executionStateService = executionStateService ?? throw new ArgumentNullException(nameof(executionStateService));
         _threadExecutionService = threadExecutionService ?? throw new ArgumentNullException(nameof(threadExecutionService));
+        _eventHandlers = eventHandlers ?? throw new ArgumentNullException(nameof(eventHandlers));
+        _tracingService = tracingService ?? throw new ArgumentNullException(nameof(tracingService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -149,7 +158,16 @@ public class OrchestrationProcessor : IOrchestrationProcessor
             _activeExecutions[processExecutionID] = (executionContext.ProcessThreadExecutionID, executionStack, executionContext.Memory);
             _pauseSignals[processExecutionID] = false;
 
+            // Notify event handlers that workflow is starting
+            await RaiseWorkflowStartingEventAsync(executionContext, cancellationToken);
+
+            // Create execution trace for debugging and monitoring (create outside try so it's available in catch)
+            var executionTrace = _tracingService.CreateTrace(
+                executionContext.ParentProcessContext?.ProcessExecutionID ?? executionContext.ProcessThreadExecutionID,
+                executionContext.ProcessThreadExecutionID);
+
             try
+
             {
                 while (executionStack.Count > 0)
                 {
@@ -189,6 +207,9 @@ public class OrchestrationProcessor : IOrchestrationProcessor
                     // Create element context
                     var elementContext = CreateElementExecutionContext(currentElement, executionContext);
 
+                    // Notify event handlers that node is executing
+                    await RaiseNodeExecutingEventAsync(elementContext, cancellationToken);
+
                     // Execute element with retry logic and timeout handling
                     try
                     {
@@ -218,6 +239,23 @@ public class OrchestrationProcessor : IOrchestrationProcessor
 
                         // Update execution memory with node output
                         executionContext.Memory.SetNodeOutput(currentElement.ProcessElementKey, result.OutputData);
+
+                        // Notify event handlers that node has executed
+                        await RaiseNodeExecutedEventAsync(result, elementContext, cancellationToken);
+
+                        // Record node execution trace for debugging
+                        var nodeTrace = new NodeExecutionTrace
+                        {
+                            ElementKey = currentElement.ProcessElementKey,
+                            ElementType = currentElement.ProcessElementTypeName,
+                            ExecutionSequence = executionContext.CompletedNodeCount + 1,
+                            OutputPortKey = result.OutputPortKey,
+                            OutputDataSnapshot = result.OutputData != null ?
+                                System.Text.Json.JsonSerializer.Serialize(result.OutputData).Substring(0, Math.Min(1000, System.Text.Json.JsonSerializer.Serialize(result.OutputData).Length))
+                                : null
+                        };
+                        nodeTrace.Complete(result.IsSuccess ? "Success" : "Failed");
+                        await _tracingService.RecordNodeTraceAsync(executionTrace.TraceId, nodeTrace, cancellationToken);
 
                         // Check for loop control signals (break/continue)
                         if (executionContext.Memory.LoopBreakSignal)
@@ -264,29 +302,126 @@ public class OrchestrationProcessor : IOrchestrationProcessor
 
                         _logger.LogWarning(
                             ex,
-                            "Node execution timeout - {ElementKey} (TimeoutSeconds: {TimeoutSeconds})",
+                            "Node execution timeout - {ElementKey} (TimeoutSeconds: {TimeoutSeconds}, Behavior: {Behavior})",
                             currentElement.ProcessElementKey,
-                            currentElement.TimeoutSeconds);
+                            currentElement.TimeoutSeconds,
+                            currentElement.TimeoutBehavior);
 
-                        // Create error context for timeout
-                        var errorContext = ExecutionErrorContext.CreateFromException(
-                            currentElement.ProcessElementID,
-                            currentElement.ProcessElementKey,
-                            currentElement.ProcessElementTypeName ?? "Unknown",
-                            timeoutException,
-                            currentAttempt: 0,
-                            maxRetries: 0); // Don't retry timeouts
+                        // Record error trace for debugging
+                        var errorTrace = new ErrorTrace
+                        {
+                            ElementKey = currentElement.ProcessElementKey,
+                            ErrorType = "Timeout",
+                            Message = timeoutException.Message,
+                            StackTrace = timeoutException.StackTrace,
+                            Severity = "Error"
+                        };
+                        await _tracingService.RecordErrorTraceAsync(executionTrace.TraceId, errorTrace, cancellationToken);
 
-                        _errorHandler.LogError(errorContext);
+                        // Handle timeout based on configured behavior
+                        var timeoutBehavior = currentElement.TimeoutBehavior ?? "Error";
 
-                        // Timeouts don't retry - fail immediately
-                        executionContext.State = eExecutionState.Failed;
-                        throw new InvalidOperationException(
-                            $"Execution failed at element {currentElement.ProcessElementKey}: Node timeout after {currentElement.TimeoutSeconds}s",
-                            timeoutException);
+                        switch (timeoutBehavior.ToLowerInvariant())
+                        {
+                            case "skip":
+                                // Skip the node and continue with downstream nodes
+                                _logger.LogInformation("Timeout behavior 'Skip': Skipping node {ElementKey}", currentElement.ProcessElementKey);
+                                executionContext.Memory.SetNodeOutput(currentElement.ProcessElementKey, new Dictionary<string, object>());
+
+                                // Route to next nodes with success output port
+                                var nextNodesSkip = _executionRouter.GetDownstreamNodesForOutputPort(
+                                    currentElement, "success", threadDefinition);
+                                foreach (var nextNode in nextNodesSkip)
+                                {
+                                    executionStack.Push(nextNode);
+                                }
+                                executionContext.CompletedNodeCount++;
+                                break;
+
+                            case "cancel":
+                                // Cancel execution and stop immediately
+                                _logger.LogWarning("Timeout behavior 'Cancel': Stopping execution at node {ElementKey}", currentElement.ProcessElementKey);
+                                executionContext.State = eExecutionState.Cancelled;
+                                break;
+
+                            case "retry":
+                                // Retry execution using existing retry policy
+                                _logger.LogInformation("Timeout behavior 'Retry': Retrying node {ElementKey}", currentElement.ProcessElementKey);
+
+                                // Create error context with timeout exception
+                                var errorContextRetry = ExecutionErrorContext.CreateFromException(
+                                    currentElement.ProcessElementID,
+                                    currentElement.ProcessElementKey,
+                                    currentElement.ProcessElementTypeName ?? "Unknown",
+                                    timeoutException,
+                                    currentAttempt: 1,
+                                    maxRetries: currentElement.Element?.MaxRetries ?? 3);
+
+                                _errorHandler.LogError(errorContextRetry);
+
+                                // Re-execute with retry policy that allows timeouts
+                                var retryPolicy = RetryPolicy.DefaultActionPolicy();
+                                var result = await _errorHandler.HandleErrorAsync(
+                                    errorContextRetry,
+                                    retryPolicy,
+                                    async _ =>
+                                    {
+                                        // Retry action - re-execute the node
+                                        var retryResult = await _elementExecutor.ExecuteAsync(elementContext, cancellationToken);
+                                        nodeResults.Add(retryResult);
+                                        executionContext.Memory.SetNodeOutput(currentElement.ProcessElementKey, retryResult.OutputData);
+
+                                        // Route next nodes
+                                        var nextNodesRetry = _executionRouter.GetDownstreamNodesForOutputPort(
+                                            currentElement, retryResult.OutputPortKey, threadDefinition);
+                                        foreach (var nextNode in nextNodesRetry)
+                                        {
+                                            executionStack.Push(nextNode);
+                                        }
+                                    },
+                                    cancellationToken);
+
+                                if (!result.ShouldContinue)
+                                {
+                                    executionContext.State = eExecutionState.Failed;
+                                    throw new InvalidOperationException(
+                                        $"Execution failed at element {currentElement.ProcessElementKey}: Retry exhausted after {currentElement.TimeoutSeconds}s timeout",
+                                        timeoutException);
+                                }
+                                executionContext.CompletedNodeCount++;
+                                break;
+
+                            case "error":
+                            default:
+                                // Default behavior: Route to error output port
+                                _logger.LogWarning("Timeout behavior 'Error': Routing to error port for {ElementKey}", currentElement.ProcessElementKey);
+
+                                var errorContext = ExecutionErrorContext.CreateFromException(
+                                    currentElement.ProcessElementID,
+                                    currentElement.ProcessElementKey,
+                                    currentElement.ProcessElementTypeName ?? "Unknown",
+                                    timeoutException,
+                                    currentAttempt: 0,
+                                    maxRetries: 0);
+
+                                _errorHandler.LogError(errorContext);
+
+                                // Route to error output port
+                                var nextNodesError = _executionRouter.GetDownstreamNodesForOutputPort(
+                                    currentElement, "error", threadDefinition);
+                                foreach (var nextNode in nextNodesError)
+                                {
+                                    executionStack.Push(nextNode);
+                                }
+                                executionContext.CompletedNodeCount++;
+                                break;
+                        }
                     }
                     catch (Exception ex)
                     {
+                        // Notify event handlers of error
+                        await RaiseErrorEventAsync(elementContext, ex, cancellationToken);
+
                         // Check if we're in a try-catch-finally block
                         var exceptionContext = executionContext.Memory.GetCurrentExceptionContext();
                         if (exceptionContext != null)
@@ -443,12 +578,45 @@ public class OrchestrationProcessor : IOrchestrationProcessor
                 CompletedNodes = executionContext.CompletedNodeCount
             };
 
+            // Notify event handlers that workflow has completed
+            await RaiseWorkflowCompletedEventAsync(threadExecution, executionContext, cancellationToken);
+
+            // Complete execution trace
+            var traceStatus = executionContext.State switch
+            {
+                eExecutionState.Completed => "Completed",
+                eExecutionState.Failed => "Failed",
+                eExecutionState.Cancelled => "Cancelled",
+                eExecutionState.Paused => "Paused",
+                _ => "Unknown"
+            };
+            await _tracingService.CompleteTraceAsync(executionTrace.TraceId, traceStatus, cancellationToken);
+
             return threadExecution;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error executing ProcessThread {ProcessThreadID}", processThreadID);
             executionContext.State = eExecutionState.Failed;
+
+            // Record error trace and complete execution trace
+            try
+            {
+                var errorTrace = new ErrorTrace
+                {
+                    ErrorType = ex.GetType().Name,
+                    Message = ex.Message,
+                    StackTrace = ex.StackTrace,
+                    Severity = "Critical"
+                };
+                await _tracingService.RecordErrorTraceAsync(executionTrace.TraceId, errorTrace, cancellationToken);
+                await _tracingService.CompleteTraceAsync(executionTrace.TraceId, "Failed", cancellationToken);
+            }
+            catch
+            {
+                // Don't let tracing failures prevent error propagation
+            }
+
             throw;
         }
     }
@@ -638,5 +806,98 @@ public class OrchestrationProcessor : IOrchestrationProcessor
             ElementDefinition = elementDefinition,
             InputData = new Dictionary<string, object>()
         };
+    }
+
+    /// <summary>Raises the workflow starting event for all registered event handlers.</summary>
+    private async Task RaiseWorkflowStartingEventAsync(
+        ProcessThreadExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        foreach (var handler in _eventHandlers)
+        {
+            try
+            {
+                await handler.OnWorkflowStartingAsync(context, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Event handler failed in OnWorkflowStartingAsync: {Handler}", handler.GetType().Name);
+            }
+        }
+    }
+
+    /// <summary>Raises the node executing event for all registered event handlers.</summary>
+    private async Task RaiseNodeExecutingEventAsync(
+        ProcessElementExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        foreach (var handler in _eventHandlers)
+        {
+            try
+            {
+                await handler.OnNodeExecutingAsync(context, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Event handler failed in OnNodeExecutingAsync: {Handler}", handler.GetType().Name);
+            }
+        }
+    }
+
+    /// <summary>Raises the node executed event for all registered event handlers.</summary>
+    private async Task RaiseNodeExecutedEventAsync(
+        NodeExecutionResult result,
+        ProcessElementExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        foreach (var handler in _eventHandlers)
+        {
+            try
+            {
+                await handler.OnNodeExecutedAsync(result, context, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Event handler failed in OnNodeExecutedAsync: {Handler}", handler.GetType().Name);
+            }
+        }
+    }
+
+    /// <summary>Raises the error event for all registered event handlers.</summary>
+    private async Task RaiseErrorEventAsync(
+        ProcessElementExecutionContext context,
+        Exception error,
+        CancellationToken cancellationToken)
+    {
+        foreach (var handler in _eventHandlers)
+        {
+            try
+            {
+                await handler.OnErrorAsync(context, error, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Event handler failed in OnErrorAsync: {Handler}", handler.GetType().Name);
+            }
+        }
+    }
+
+    /// <summary>Raises the workflow completed event for all registered event handlers.</summary>
+    private async Task RaiseWorkflowCompletedEventAsync(
+        ProcessThreadExecution execution,
+        ProcessThreadExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        foreach (var handler in _eventHandlers)
+        {
+            try
+            {
+                await handler.OnWorkflowCompletedAsync(execution, context, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Event handler failed in OnWorkflowCompletedAsync: {Handler}", handler.GetType().Name);
+            }
+        }
     }
 }

@@ -14,6 +14,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BizFirst.Ai.AiSession.Domai
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BizFirst.Ai.AiSession.Service", "..\AiSession\BizFirst.Ai.AiSession.Service\BizFirst.Ai.AiSession.Service.csproj", "{F6G7H8I9-J0K1-4L2M-3N4O-5P6Q7R8S9T0U}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BizFirst.Ai.ProcessEngine.JS.Services", "BizFirst.Ai.ProcessEngine.JS.Services\BizFirst.Ai.ProcessEngine.JS.Services.csproj", "{A7B8C9D0-E1F2-4G3H-4I5J-6K7L8M9N0O1P}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -44,5 +46,9 @@ Global
 		{F6G7H8I9-J0K1-4L2M-3N4O-5P6Q7R8S9T0U}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F6G7H8I9-J0K1-4L2M-3N4O-5P6Q7R8S9T0U}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F6G7H8I9-J0K1-4L2M-3N4O-5P6Q7R8S9T0U}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A7B8C9D0-E1F2-4G3H-4I5J-6K7L8M9N0O1P}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A7B8C9D0-E1F2-4G3H-4I5J-6K7L8M9N0O1P}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A7B8C9D0-E1F2-4G3H-4I5J-6K7L8M9N0O1P}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A7B8C9D0-E1F2-4G3H-4I5J-6K7L8M9N0O1P}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

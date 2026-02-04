@@ -10,6 +10,9 @@ using BizFirst.Ai.ProcessEngine.Service.ExpressionEngine;
 using BizFirst.Ai.ProcessEngine.Service.ContextManagement;
 using BizFirst.Ai.ProcessEngine.Service.ErrorHandling;
 using BizFirst.Ai.ProcessEngine.Service.Persistence;
+using BizFirst.Ai.ProcessEngine.Service.Execution.Events;
+using BizFirst.Ai.ProcessEngine.Service.Execution.Tracing;
+using BizFirst.Ai.ProcessEngine.JS.Services.Dependencies;
 using BizFirst.Ai.Process.Service;
 using BizFirst.Ai.Process.Domain.Interfaces.Repositories;
 
@@ -46,11 +49,17 @@ public static class DependencyInjection
         // Definition loading (uses Process services for data)
         services.AddScoped<IProcessThreadLoader, ProcessThreadLoader>();
 
-        // Expression evaluation
-        services.AddScoped<IExpressionEvaluator, ExpressionEvaluator>();
+        // JavaScript services (expression evaluation with security)
+        services.AddJavaScriptServices();
 
         // Error handling and retry logic
         services.AddScoped<IExecutionErrorHandler, ExecutionErrorHandler>();
+
+        // Event handlers for execution lifecycle hooks
+        services.AddTransient<IExecutionEventHandler, LoggingEventHandler>();
+
+        // Execution tracing (debugging and monitoring)
+        services.AddScoped<IExecutionTracingService, InMemoryExecutionTracingService>();
 
         // Persistence layer (pause/resume/cancel state management)
         services.AddScoped<IExecutionStateService, ExecutionStateService>();

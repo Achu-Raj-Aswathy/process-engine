@@ -16,8 +16,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BizFirst.Ai.ProcessEngine.Domain\BizFirst.Ai.ProcessEngine.Domain.csproj" />
+    <ProjectReference Include="..\BizFirst.Ai.ProcessEngine.JS.Services\BizFirst.Ai.ProcessEngine.JS.Services.csproj" />
     <ProjectReference Include="..\..\AiSession\BizFirst.Ai.AiSession.Service\BizFirst.Ai.AiSession.Service.csproj" />
     <ProjectReference Include="..\..\Process\BizFirst.Ai.Process.Service\BizFirst.Ai.Process.Service.csproj" />
+    <ProjectReference Include="..\..\..\Go\Essentials\BizFirstFi.Go.Essentials.AppCache\BizFirstFi.Go.Essentials.AppCache.csproj" />
   </ItemGroup>
 
 </Project>

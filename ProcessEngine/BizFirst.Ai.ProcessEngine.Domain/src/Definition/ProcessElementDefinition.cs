@@ -29,6 +29,9 @@ public class ProcessElementDefinition //todo: remove
     /// <summary>Gets the timeout in seconds for this element.</summary>
     public int TimeoutSeconds => Element.Timeout ?? 300; // Default 5 minutes
 
+    /// <summary>Gets the timeout behavior for this element (Error, Cancel, Skip, Retry).</summary>
+    public string TimeoutBehavior => Element.TimeoutBehavior ?? "Error"; // Default is Error
+
     /// <summary>Gets the configuration JSON for this element.</summary>
     public string Configuration => Element.Configuration;
 
